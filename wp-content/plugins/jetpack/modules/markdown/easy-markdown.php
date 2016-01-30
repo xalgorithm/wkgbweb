@@ -1,4 +1,5 @@
 <?php
+
 /*
 Plugin Name: Easy Markdown
 Plugin URI: http://automattic.com/
@@ -63,28 +64,50 @@ class WPCom_Markdown {
 	public function load() {
 		$this->add_default_post_type_support();
 		$this->maybe_load_actions_and_filters();
-		add_action( 'switch_blog', array( $this, 'maybe_load_actions_and_filters' ) );
+		if ( defined( 'REST_API_REQUEST' ) && REST_API_REQUEST ) {
+			add_action( 'switch_blog', array( $this, 'maybe_load_actions_and_filters' ), 10, 2 );
+		}
 		add_action( 'admin_init', array( $this, 'register_setting' ) );
+		add_action( 'admin_init', array( $this, 'maybe_unload_for_bulk_edit' ) );
 		if ( current_theme_supports( 'o2' ) || class_exists( 'P2' ) ) {
 			$this->add_o2_helpers();
 		}
 	}
 
 	/**
-	 * Called on init and fires on blog_switch to decide if our actions and filters
-	 * should be running.
+	 * If we're in a bulk edit session, unload so that we don't lose our markdown metadata
 	 * @return null
 	 */
-	public function maybe_load_actions_and_filters() {
-		if ( $this->is_posting_enabled() )
-			$this->load_markdown_for_posts();
-		else
+	public function maybe_unload_for_bulk_edit() {
+		if ( isset( $_REQUEST['bulk_edit'] ) && $this->is_posting_enabled() ) {
 			$this->unload_markdown_for_posts();
+		}
+	}
 
-		if ( $this->is_commenting_enabled() )
+	/**
+	 * Called on init and fires on switch_blog to decide if our actions and filters
+	 * should be running.
+	 * @param int|null $new_blog_id New blog ID
+	 * @param int|null $old_blog_id Old blog ID
+	 * @return null
+	 */
+	public function maybe_load_actions_and_filters( $new_blog_id = null, $old_blog_id = null ) {
+		// If this is a switch_to_blog call, and the blog isn't changing, we'll already be loaded
+		if ( $new_blog_id && $new_blog_id === $old_blog_id ) {
+			return;
+		}
+
+		if ( $this->is_posting_enabled() ) {
+			$this->load_markdown_for_posts();
+		} else {
+			$this->unload_markdown_for_posts();
+		}
+
+		if ( $this->is_commenting_enabled() ) {
 			$this->load_markdown_for_comments();
-		else
+		} else {
 			$this->unload_markdown_for_comments();
+		}
 	}
 
 	/**
@@ -101,7 +124,7 @@ class WPCom_Markdown {
 		add_action( 'xmlrpc_call', array( $this, 'xmlrpc_actions' ) );
 		add_filter( 'content_save_pre', array( $this, 'preserve_code_blocks' ), 1 );
 		if ( defined( 'XMLRPC_REQUEST' ) && XMLRPC_REQUEST ) {
-			$this->check_for_mwgetpost();
+			$this->check_for_early_methods();
 		}
 	}
 
@@ -125,8 +148,9 @@ class WPCom_Markdown {
 	 * @return null
 	 */
 	protected function load_markdown_for_comments() {
-		add_filter( 'preprocess_comment', array( $this, 'preprocess_comment' ) );
-		add_filter( 'comment_save_pre', array( $this, 'comment_save_pre' ) );
+		// Use priority 9 so that Markdown runs before KSES, which can clean up
+		// any munged HTML.
+		add_filter( 'pre_comment_content', array( $this, 'pre_comment_content' ), 9 );
 	}
 
 	/**
@@ -134,8 +158,7 @@ class WPCom_Markdown {
 	 * @return null
 	 */
 	protected function unload_markdown_for_comments() {
-		remove_filter( 'preprocess_comment', array( $this, 'preprocess_comment' ) );
-		remove_filter( 'comment_save_pre', array( $this, 'comment_save_pre' ) );
+		remove_filter( 'pre_comment_content', array( $this, 'pre_comment_content' ), 9 );
 	}
 
 	/**
@@ -271,6 +294,15 @@ class WPCom_Markdown {
 	 * @return string support url
 	 */
 	protected function get_support_url() {
+		/**
+		 * Filter the Markdown support URL.
+		 *
+		 * @module markdown
+		 *
+		 * @since 2.8.0
+		 *
+		 * @param string $url Markdown support URL.
+		 */
 		return apply_filters( 'easy_markdown_support_url', 'http://en.support.wordpress.com/markdown-quick-reference/' );
 	}
 
@@ -314,7 +346,7 @@ class WPCom_Markdown {
 	 * instantiating our parser.
 	 * @return object WPCom_GHF_Markdown_Parser instance.
 	 */
-	protected function get_parser() {
+	public function get_parser() {
 
 		if ( ! self::$parser ) {
 			jetpack_require_lib( 'markdown' );
@@ -399,17 +431,32 @@ class WPCom_Markdown {
 			if ( $this->is_markdown( $post_id ) && ! empty( $post_data['post_content_filtered'] ) ) {
 				$post_data['post_content_filtered'] = '';
 			}
+			// we have no context to determine supported post types in the `post_content_pre` hook,
+			// which already ran to sanitize code blocks. Undo that.
+			$post_data['post_content'] = $this->get_parser()->codeblock_restore( $post_data['post_content'] );
 			return $post_data;
 		}
 		// rejigger post_content and post_content_filtered
 		// revisions are already in the right place, except when we're restoring, but that's taken care of elsewhere
-		if ( 'revision' !== $post_data['post_type'] ) {
+		// also prevent quick edit feature from overriding already-saved markdown (issue https://github.com/Automattic/jetpack/issues/636)
+		if ( 'revision' !== $post_data['post_type'] && ! isset( $_POST['_inline_edit'] ) ) {
+			/**
+			 * Filter the original post content passed to Markdown.
+			 *
+			 * @module markdown
+			 *
+			 * @since 2.8.0
+			 *
+			 * @param string $post_data['post_content'] Untransformed post content.
+			 */
 			$post_data['post_content_filtered'] = apply_filters( 'wpcom_untransformed_content', $post_data['post_content'] );
 			$post_data['post_content'] = $this->transform( $post_data['post_content'], array( 'id' => $post_id ) );
+			/** This filter is already documented in core/wp-includes/default-filters.php */
 			$post_data['post_content'] = apply_filters( 'content_save_pre', $post_data['post_content'] );
 		} elseif ( 0 === strpos( $post_data['post_name'], $post_data['post_parent'] . '-autosave' ) ) {
 			// autosaves for previews are weird
 			$post_data['post_content'] = $this->transform( $post_data['post_content'], array( 'id' => $post_data['post_parent'] ) );
+			/** This filter is already documented in core/wp-includes/default-filters.php */
 			$post_data['post_content'] = apply_filters( 'content_save_pre', $post_data['post_content'] );
 		}
 
@@ -448,20 +495,12 @@ class WPCom_Markdown {
 
 	/**
 	 * Run a comment through Markdown. Easy peasy.
-	 * @param  string $comment_data A comment.
-	 * @return string               A comment, processed by Markdown.
+	 * @param  string $content
+	 * @return string
 	 */
-	public function preprocess_comment( $comment_data ) {
-		$comment_data['comment_content'] = $this->transform( $comment_data['comment_content'], array(
-			'id' => $this->comment_hash( $comment_data['comment_content'] )
-		) );
-		return $comment_data;
-	}
-
-	public function comment_save_pre( $content ) {
+	public function pre_comment_content( $content ) {
 		return $this->transform( $content, array(
 			'id' => $this->comment_hash( $content ),
-			'unslash' => false
 		) );
 	}
 
@@ -490,6 +529,16 @@ class WPCom_Markdown {
 		if ( $args['unslash'] )
 			$text = wp_unslash( $text );
 
+		/**
+		 * Filter the content to be run through Markdown, before it's transformed by Markdown.
+		 *
+		 * @module markdown
+		 *
+		 * @since 2.8.0
+		 *
+		 * @param string $text Content to be run through Markdown
+		 * @param array $args Array of Markdown options.
+		 */
 		$text = apply_filters( 'wpcom_markdown_transform_pre', $text, $args );
 		// ensure our paragraphs are separated
 		$text = str_replace( array( '</p><p>', "</p>\n<p>" ), "</p>\n\n<p>", $text );
@@ -509,6 +558,16 @@ class WPCom_Markdown {
 		$text = preg_replace( '/((id|href)="#?fn(ref)?):/', "$1-", $text );
 		// Markdown inserts extra spaces to make itself work. Buh-bye.
 		$text = rtrim( $text );
+		/**
+		 * Filter the content to be run through Markdown, after it was transformed by Markdown.
+		 *
+		 * @module markdown
+		 *
+		 * @since 2.8.0
+		 *
+		 * @param string $text Content to be run through Markdown
+		 * @param array $args Array of Markdown options.
+		 */
 		$text = apply_filters( 'wpcom_markdown_transform_post', $text, $args );
 
 		// probably need to re-slash
@@ -575,6 +634,7 @@ class WPCom_Markdown {
 		switch ( $xmlrpc_method ) {
 			case 'metaWeblog.getRecentPosts':
 			case 'wp.getPosts':
+			case 'wp.getPages':
 				add_action( 'parse_query', array( $this, 'make_filterable' ), 10, 1 );
 				break;
 			case 'wp.getPost':
@@ -584,19 +644,21 @@ class WPCom_Markdown {
 	}
 
 	/**
-	 * The metaWeblog.getPost xmlrpc_call action fires *after* get_post() is called.
-	 * So, we have to detect that method and prime the post cache early.
+	 * metaWeblog.getPost and wp.getPage fire xmlrpc_call action *after* get_post() is called.
+	 * So, we have to detect those methods and prime the post cache early.
 	 * @return null
 	 */
-	protected function check_for_mwgetpost() {
+	protected function check_for_early_methods() {
 		global $HTTP_RAW_POST_DATA;
-		if ( false === strpos( $HTTP_RAW_POST_DATA, 'metaWeblog.getPost') ) {
+		if ( false === strpos( $HTTP_RAW_POST_DATA, 'metaWeblog.getPost' )
+			&& false === strpos( $HTTP_RAW_POST_DATA, 'wp.getPage' ) ) {
 			return;
 		}
 		include_once( ABSPATH . WPINC . '/class-IXR.php' );
 		$message = new IXR_Message( $HTTP_RAW_POST_DATA );
 		$message->parse();
-		$this->prime_post_cache( $message->params[0] );
+		$post_id_position = 'metaWeblog.getPost' === $message->methodName ?  0 : 1;
+		$this->prime_post_cache( $message->params[ $post_id_position ] );
 	}
 
 	/**
@@ -608,7 +670,7 @@ class WPCom_Markdown {
 	private function prime_post_cache( $post_id = false ) {
 		global $wp_xmlrpc_server;
 		if ( ! $post_id ) {
-			$post_id = $wp_xmlrpc_server->message->params[0];
+			$post_id = $wp_xmlrpc_server->message->params[3];
 		}
 
 		// prime the post cache

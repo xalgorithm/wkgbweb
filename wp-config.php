@@ -19,13 +19,13 @@
 define('DB_NAME', 'westkingdomfaire_org_2');
 
 /** MySQL database username */
-define('DB_USER', 'j8ehwtvx');
+define('DB_USER', 'wktowne');
 
 /** MySQL database password */
-define('DB_PASSWORD', '22L36djy');
+define('DB_PASSWORD', 'X0IveN31c1G$7@%m');
 
 /** MySQL hostname */
-define('DB_HOST', 'mysql.westkingdomfaire.org');
+define('DB_HOST', 'localhost');
 
 /** Database Charset to use in creating database tables. */
 define('DB_CHARSET', 'utf8');

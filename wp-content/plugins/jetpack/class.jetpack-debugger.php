@@ -7,24 +7,22 @@ class Jetpack_Debugger {
 			$response = wp_remote_request( "http://jetpack.me/is-support-open" );
 			$body = wp_remote_retrieve_body( $response );
 			$json = json_decode( $body );
-			return ( ( bool )$json->is_support_open );
+			return ( ( bool ) $json->is_support_open );
 		}
 		catch ( Exception $e ) {
 			return true;
 		}
 	}
 
-	public static function jetpack_increase_timeout($time) {
-		$time = 30; //seconds
-		return $time;
+	public static function jetpack_increase_timeout() {
+		return 30; // seconds
 	}
 
 	public static function jetpack_debug_display_handler() {
 		if ( ! current_user_can( 'manage_options' ) )
 			wp_die( esc_html__('You do not have sufficient permissions to access this page.', 'jetpack' ) );
 
-		global $current_user;
-		get_currentuserinfo();
+		$current_user = wp_get_current_user();
 
 		$user_id = get_current_user_id();
 		$user_tokens = Jetpack_Options::get_option( 'user_tokens' );
@@ -57,6 +55,37 @@ class Jetpack_Debugger {
 		$debug_info .= "\r\n" . esc_html( "JETPACK__PLUGIN_DIR: " . JETPACK__PLUGIN_DIR );
 		$debug_info .= "\r\n" . esc_html( "SITE_URL: " . site_url() );
 		$debug_info .= "\r\n" . esc_html( "HOME_URL: " . home_url() );
+		$debug_info .= "\r\n" . esc_html( "SERVER_PORT: " . $_SERVER['SERVER_PORT'] );
+
+
+		foreach ( array (
+					  'GD_PHP_HANDLER',
+					  'HTTP_AKAMAI_ORIGIN_HOP',
+					  'HTTP_CF_CONNECTING_IP',
+					  'HTTP_CLIENT_IP',
+					  'HTTP_FASTLY_CLIENT_IP',
+					  'HTTP_FORWARDED',
+					  'HTTP_FORWARDED_FOR',
+					  'HTTP_INCAP_CLIENT_IP',
+					  'HTTP_TRUE_CLIENT_IP',
+					  'HTTP_X_CLIENTIP',
+					  'HTTP_X_CLUSTER_CLIENT_IP',
+					  'HTTP_X_FORWARDED',
+					  'HTTP_X_FORWARDED_FOR',
+					  'HTTP_X_IP_TRAIL',
+					  'HTTP_X_REAL_IP',
+					  'HTTP_X_VARNISH',
+					  'REMOTE_ADDR'
+				  ) as $header ) {
+			if( isset( $_SERVER[$header] ) ) {
+				$debug_info .= "\r\n" . esc_html( 'IP HEADER: '.$header . ": " . $_SERVER[$header] );
+			} else {
+				$debug_info .= "\r\n" . esc_html( 'IP HEADER: '.$header . ": Not Set" );
+			}
+		}
+
+
+		$debug_info .= "\r\n" . esc_html( "PROTECT_TRUSTED_HEADER: " . json_encode(get_site_option( 'trusted_ip_header' )));
 
 		$debug_info .= "\r\n\r\nTEST RESULTS:\r\n\r\n";
 		$debug_raw_info = '';
@@ -84,7 +113,6 @@ class Jetpack_Debugger {
 
 		$self_xml_rpc_url = home_url( 'xmlrpc.php' );
 
-		$args = array();
 		$testsite_url = Jetpack::fix_url_for_bad_hosts( JETPACK__API_BASE . 'testsite/1/?url=' );
 
 		add_filter( 'http_request_timeout', array( 'Jetpack_Debugger', 'jetpack_increase_timeout' ) );
@@ -97,7 +125,7 @@ class Jetpack_Debugger {
 		?>
 		<div class="wrap">
 			<h2><?php esc_html_e( 'Jetpack Debugging Center', 'jetpack' ); ?></h2>
-			<h3><?php _e( "Testing your site's compatibily with Jetpack...", 'jetpack' ); ?></h3>
+			<h3><?php _e( "Testing your site's compatibility with Jetpack...", 'jetpack' ); ?></h3>
 			<div class="jetpack-debug-test-container">
 			<?php
 			ob_start();
@@ -138,9 +166,21 @@ class Jetpack_Debugger {
 				<h3><?php esc_html_e( 'Trouble with Jetpack?', 'jetpack' ); ?></h3>
 				<h4><?php esc_html_e( 'It may be caused by one of these issues, which you can diagnose yourself:', 'jetpack' ); ?></h4>
 				<ol>
-					<li><b><em><?php esc_html_e( 'A known issue.', 'jetpack' ); ?></em></b>  <?php echo sprintf( __( 'Some themes and plugins have <a href="%1$s" target="_blank">known conflicts</a> with Jetpack – check the <a href="%2$s" target="_blank">list</a>. (You can also browse the <a href="%3$s">Jetpack support pages</a> or <a href="%4$s">Jetpack support forum</a> to see if others have experienced and solved the problem.)', 'jetpack' ), 'http://jetpack.me/support/getting-started-with-jetpack/known-issues/', 'http://jetpack.me/support/getting-started-with-jetpack/known-issues/', 'http://jetpack.me/support/', 'http://wordpress.org/support/plugin/jetpack' ); ?></li>
+					<li><b><em><?php esc_html_e( 'A known issue.', 'jetpack' ); ?></em></b>  <?php echo sprintf( __( 'Some themes and plugins have <a href="%1$s">known conflicts</a> with Jetpack – check the <a href="%2$s">list</a>. (You can also browse the <a href="%3$s">Jetpack support pages</a> or <a href="%4$s">Jetpack support forum</a> to see if others have experienced and solved the problem.)', 'jetpack' ), 'http://jetpack.me/support/getting-started-with-jetpack/known-issues/', 'http://jetpack.me/support/getting-started-with-jetpack/known-issues/', 'http://jetpack.me/support/', 'http://wordpress.org/support/plugin/jetpack' ); ?></li>
 					<li><b><em><?php esc_html_e( 'An incompatible plugin.', 'jetpack' ); ?></em></b>  <?php esc_html_e( "Find out by disabling all plugins except Jetpack. If the problem persists, it's not a plugin issue. If the problem is solved, turn your plugins on one by one until the problem pops up again – there's the culprit! Let us know, and we'll try to help.", 'jetpack' ); ?></li>
-					<li><b><em><?php esc_html_e( 'A theme conflict.', 'jetpack' ); ?></em></b>  <?php esc_html_e( "If your problem isn't known or caused by a plugin, try activating Twenty Twelve (the default WordPress theme). If this solves the problem, something in your theme is probably broken – let the theme's author know.", 'jetpack' ); ?></li>
+					<li>
+						<b><em><?php esc_html_e( 'A theme conflict.', 'jetpack' ); ?></em></b>
+						<?php
+							$default_theme = wp_get_theme( WP_DEFAULT_THEME );
+
+							if ( $default_theme->exists() ) {
+								echo esc_html( sprintf( __( "If your problem isn't known or caused by a plugin, try activating %s (the default WordPress theme).", 'jetpack' ), $default_theme->get( 'Name' ) ) );
+							} else {
+								esc_html_e( "If your problem isn't known or caused by a plugin, try activating the default WordPress theme.", 'jetpack' );
+							}
+						?>
+						<?php esc_html_e( "If this solves the problem, something in your theme is probably broken – let the theme's author know.", 'jetpack' ); ?>
+					</li>
 					<li><b><em><?php esc_html_e( 'A problem with your XMLRPC file.', 'jetpack' ); ?></em></b>  <?php echo sprintf( __( 'Load your <a href="%s">XMLRPC file</a>. It should say “XML-RPC server accepts POST requests only.” on a line by itself.', 'jetpack' ), site_url( 'xmlrpc.php' ) ); ?>
 						<ul>
 							<li>- <?php esc_html_e( "If it's not by itself, a theme or plugin is displaying extra characters. Try steps 2 and 3.", 'jetpack' ); ?></li>
@@ -149,11 +189,22 @@ class Jetpack_Debugger {
 					</li>
 				</ol>
 				<?php if ( self::is_jetpack_support_open() ): ?>
-				<p class="jetpack-show-contact-form"><?php _e( 'If none of these help you find a solution, <a href="#">click here to contact Jetpack support</a>. Tell us as much as you can about the issue and what steps you\'ve tried to resolve it, and one of our Happiness Engineers will be in touch to help.', 'jetpack' ); ?>
+				<p class="jetpack-show-contact-form"><?php echo sprintf( __( 'If none of these help you find a solution, <a href="%s">click here to contact Jetpack support</a>. Tell us as much as you can about the issue and what steps you\'ve tried to resolve it, and one of our Happiness Engineers will be in touch to help.', 'jetpack' ), Jetpack::admin_url( array( 'page' => 'jetpack-debugger', 'contact' => true ) ) ); ?>
 				</p>
 				<?php endif; ?>
+				<?php if ( Jetpack::is_active() ) : ?>
+					<hr />
+					<div id="connected-user-details">
+						<p><?php printf( __( 'The primary connection is owned by <strong>%s</strong>\'s WordPress.com account.', 'jetpack' ), esc_html( Jetpack::get_master_user_email() ) ); ?></p>
+					</div>
+					<hr />
+					<div id="sync-related-posts">
+						<p><?php echo esc_html__( 'Some features of Jetpack uses the WordPress.com infrastructure and requires that your public content be mirrored there. If you see intermittent issues only affecting certain posts, please try requesting a reindex of your posts.', 'jetpack' ); ?></p>
+						<?php echo Jetpack::init()->sync->reindex_ui() ?>
+					</div>
+				<?php endif; ?>
 			</div>
-			<div id="contact-message" style="display:none">
+			<div id="contact-message" <?php if( ! isset( $_GET['contact'] ) ) {?>  style="display:none" <?php } ?>>
 			<?php if ( self::is_jetpack_support_open() ): ?>
 				<form id="contactme" method="post" action="http://jetpack.me/contact-support/">
 					<input type="hidden" name="action" value="submit">
@@ -161,7 +212,22 @@ class Jetpack_Debugger {
 
 					<input type="hidden" name="contact_form" id="contact_form" value="1">
 					<input type="hidden" name="blog_url" id="blog_url" value="<?php echo esc_attr( site_url() ); ?>">
-					<input type="hidden" name="subject" id="subject" value="from: <?php echo esc_attr( site_url() ); ?> Jetpack contact form">
+					<?php
+						$subject_line = sprintf(
+							/* translators: %s is the URL of the site */
+							_x( 'from: %s Jetpack contact form', 'Support request email subject line', 'jetpack' ),
+							esc_attr( site_url() )
+						);
+
+						if ( Jetpack::is_development_version() ) {
+							$subject_line = 'BETA ' . $subject_line;
+						}
+
+						$subject_line_input = printf(
+							'<input type="hidden" name="subject" id="subject" value="%s"">',
+							$subject_line
+						);
+					?>
 					<div class="formbox">
 						<label for="message" class="h"><?php esc_html_e( 'Please describe the problem you are having.', 'jetpack' ); ?></label>
 						<textarea name="message" cols="40" rows="7" id="did"></textarea>
@@ -170,13 +236,13 @@ class Jetpack_Debugger {
 					<div id="name_div" class="formbox">
 						<label class="h" for="your_name"><?php esc_html_e( 'Name', 'jetpack' ); ?></label>
 			  			<span class="errormsg"><?php esc_html_e( 'Let us know your name.', 'jetpack' ); ?></span>
-						<input name="your_name" type="text" id="your_name" value="<?php esc_html_e( $current_user->display_name , 'jetpack'); ?>" size="40">
+						<input name="your_name" type="text" id="your_name" value="<?php esc_html_e( $current_user->display_name, 'jetpack'); ?>" size="40">
 					</div>
 
 					<div id="email_div" class="formbox">
 						<label class="h" for="your_email"><?php esc_html_e( 'E-mail', 'jetpack' ); ?></label>
 			  			<span class="errormsg"><?php esc_html_e( 'Use a valid email address.', 'jetpack' ); ?></span>
-						<input name="your_email" type="text" id="your_email" value="<?php esc_html_e( $current_user->user_email , 'jetpack'); ?>" size="40">
+						<input name="your_email" type="text" id="your_email" value="<?php esc_html_e( $current_user->user_email, 'jetpack'); ?>" size="40">
 					</div>
 
 					<div id="toggle_debug_info" class="formbox">
@@ -192,7 +258,7 @@ class Jetpack_Debugger {
 
 					<div id="blog_div" class="formbox">
 						<div id="submit_div" class="contact-support">
-						<input type="submit" name="submit" value="Contact Support">
+						<input type="submit" name="submit" value="<?php esc_html_e( 'Submit &#187;', 'jetpack' ); ?>">
 						</div>
 					</div>
 					<div style="clear: both;"></div>
